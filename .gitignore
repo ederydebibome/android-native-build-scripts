@@ -1,0 +1,21 @@
+# Build outputs and downloaded archives
+build/
+dist/
+out/
+tmp/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+
+# Local environment and credentials
+*.env
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Logs
+*.log
