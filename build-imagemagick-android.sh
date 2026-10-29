@@ -4,22 +4,41 @@ set -euo pipefail
 # Build ImageMagick Android with native delegates.
 # Run with:
 #   C:\msys64\usr\bin\bash.exe path\to\build-imagemagick-android.sh
+#
+# Optional environment variables:
+#   ANDROID_SDK_WIN   Android SDK folder
+#                     (default: %ANDROID_SDK_ROOT%, %ANDROID_HOME%, or
+#                     %LOCALAPPDATA%\Android\Sdk)
+#   ANDROID_NDK_WIN   NDK folder (default: the newest one in <SDK>\ndk)
+#   API               Android API level (default: 23)
+#   ABIS              ABIs to build (default: arm64-v8a armeabi-v7a x86 x86_64)
+#   JOBS              parallel jobs (default: 4)
+#   ONLY_IMAGEMAGICK  set to 1 to rebuild only ImageMagick and keep the
+#                     dependencies that are already built
 
 export PATH="/ucrt64/bin:/usr/bin:/bin:$PATH"
 export SSL_CERT_FILE="${SSL_CERT_FILE:-/usr/ssl/certs/ca-bundle.crt}"
 export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$SSL_CERT_FILE}"
 unset CONFIG_SITE
 
-ANDROID_SDK_WIN="C:/Users/Edery Eyi/AppData/Local/Android/Sdk"
-# Autotools cannot reliably handle spaces in compiler paths. Use the Windows
-# 8.3 short path for the NDK directory.
-ANDROID_NDK_WIN="C:/Users/EDERYE~1/AppData/Local/Android/Sdk/ndk/300~1.149"
+ANDROID_SDK_WIN="${ANDROID_SDK_WIN:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${LOCALAPPDATA:-}/Android/Sdk}}}"
 ANDROID_SDK="$(cygpath -u "$ANDROID_SDK_WIN")"
-ANDROID_NDK="$(cygpath -u "$ANDROID_NDK_WIN")"
+if [[ -z "${ANDROID_NDK_WIN:-}" ]]; then
+  ndk_latest="$(ls -d "$ANDROID_SDK"/ndk/*/ 2>/dev/null | sort -V | tail -n 1 || true)"
+  if [[ -z "$ndk_latest" ]]; then
+    echo "ERROR: no NDK found in $ANDROID_SDK/ndk. Install one, or set ANDROID_NDK_WIN." >&2
+    exit 1
+  fi
+  ANDROID_NDK_WIN="$(cygpath -m "${ndk_latest%/}")"
+fi
+# Autotools cannot reliably handle spaces in compiler paths. Use the Windows
+# 8.3 short path for the NDK directory (needs 8.3 names enabled on the drive,
+# otherwise install the NDK in a path without spaces).
+ANDROID_NDK="$(cygpath -u "$(cygpath -d "$ANDROID_NDK_WIN")")"
 TOOLCHAIN="$ANDROID_NDK/toolchains/llvm/prebuilt/windows-x86_64"
 API="${API:-23}"
 
-WORK_ROOT_WIN="C:/Tmp/lukia-android-native"
+WORK_ROOT_WIN="C:/Tmp/imagemagick-android"
 WORK_ROOT="$(cygpath -u "$WORK_ROOT_WIN")"
 SRC="$WORK_ROOT/src"
 BUILD="$WORK_ROOT/build-static"
@@ -27,7 +46,7 @@ OUT="$WORK_ROOT/out-static"
 
 JOBS="${JOBS:-4}"
 
-# Keep this aligned as much as possible with your current MSYS2 ImageMagick.
+# Pinned dependency versions. Rebuild from scratch after changing any of them.
 ZLIB_VERSION="1.3.1"
 LIBPNG_VERSION="1.6.58"
 JPEG_TURBO_VERSION="3.1.4"
@@ -219,6 +238,8 @@ configure_build() {
     --host="$HOST" \
     --prefix="$PREFIX" \
     "$@"
+  # configure can write Windows-style paths (C:/...) into the Makefiles;
+  # convert them to MSYS paths so make can read them.
   find . -name Makefile -type f -exec sed -i \
     -e 's#/C:/#/c/#g' \
     -e 's#C:/#/c/#g' {} +
