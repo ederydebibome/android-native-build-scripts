@@ -9,13 +9,11 @@ Both give you static libraries for `arm64-v8a`, `armeabi-v7a`, `x86` and `x86_64
 
 ## Why I wrote these
 
-I built a desktop app for Windows, and I wrote all of its core myself as C/C++ DLLs. When I started the mobile version, I wanted that same native code to run on Android and behave exactly like it does on desktop. Not almost like it. Exactly. A few implementations that each behave a little differently will look alike, but put them together in one app and the small differences add up into differences you can actually notice.
+This started with a Windows desktop app. I wrote its whole core in C and C++, as DLLs, so when it was time to build the mobile version, the obvious plan was to take that same code and run it on Android. The point was to get exactly the same behavior on every platform, because two libraries that do the same job rarely do it the same way. One rounds a bit differently, another decodes a bit differently, a third has different defaults. Each difference is tiny, but stack enough of them in one app and you get an Android version that looks a lot like the desktop one without really being the same, which is a pain to track down.
 
-That meant the libraries my code relies on had to be the same ones on Android too. This is where I got stuck: I couldn't find ready-made Android builds of them, so I compiled them myself.
+That's why I didn't want to swap my libraries for whatever Android offers. My native code was already built around ImageMagick, so using `android.graphics` instead would have meant rewriting all that logic, just to end up with a result that's roughly what Windows gives me. No thanks. The catch was that I couldn't find ready-made Android builds of ImageMagick, or of curl, which I also needed for downloads. So I built them myself, and that's what these scripts do.
 
-For image processing, I built ImageMagick for Android instead of using what Android already ships with, `android.graphics`. It does similar things, but it isn't the same code, so I couldn't expect the same results. For downloads I needed curl, for the same reason, so I built that too, along with everything it depends on.
-
-These scripts are what came out of it. I'm sharing them so that anyone in the same situation doesn't have to start from zero, or settle for alternatives that don't do exactly what they need.
+I'm sharing them in case you're stuck at the same point. If you need a library to behave on Android the way it does everywhere else, you shouldn't have to start from zero, or settle for an alternative that does almost what you want.
 
 ## What you need
 
