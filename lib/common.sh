@@ -54,13 +54,13 @@ http_get() {
 github_version() {
   local version
   version="$(http_get "https://api.github.com/repos/$1/releases/latest" \
-    | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | LC_ALL=C sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     | head -n 1 \
     | sed "s/^$2//")" || true
   if [[ -z "$version" ]]; then
     version="$(http_get "https://api.github.com/repos/$1/tags?per_page=100" \
-      | grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' \
-      | sed 's/.*"\([^"]*\)"$/\1/' \
+      | LC_ALL=C grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | LC_ALL=C sed 's/.*"\([^"]*\)"$/\1/' \
       | grep "^$2[0-9][0-9.]*$" \
       | sed "s/^$2//" \
       | sort -V | tail -n 1)" || true
