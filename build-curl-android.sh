@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cross-compile the networking and storage libraries for Android (static):
-# OpenSSL, curl (with HTTP/2, HTTP/3, SSH, brotli, zstd, c-ares, libidn2,
-# libpsl), SQLite and nlohmann/json.
+# Cross-compile curl for Android (static libraries), with HTTP/2, HTTP/3,
+# SCP/SFTP, brotli, zstd, async DNS, IDN and the libraries it needs:
+# OpenSSL, zlib, brotli, zstd, c-ares, nghttp2, nghttp3, libssh2,
+# libunistring, libidn2 and libpsl.
+# Needs lib/common.sh (shared code) from the same repository.
 # Run with:
-#   C:\msys64\usr\bin\bash.exe path\to\build-core-deps-android.sh
+#   C:\msys64\usr\bin\bash.exe path\to\build-curl-android.sh
 #
 # Optional environment variables:
 #   ANDROID_SDK_WIN   Android SDK folder
@@ -17,117 +19,42 @@ set -euo pipefail
 #   JOBS              parallel jobs (default: 4)
 #   KEEP_PREFIX       set to 1 to keep the libraries that are already built
 #   FORCE_CURL        set to 1 to rebuild curl even if it already exists
+#   *_VERSION         skip the online lookup for one dependency and use this
+#                     version, for example ZLIB_VERSION=1.3.1
 
-export PATH="/ucrt64/bin:/usr/bin:/bin:$PATH"
-export SSL_CERT_FILE="${SSL_CERT_FILE:-/usr/ssl/certs/ca-bundle.crt}"
-export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$SSL_CERT_FILE}"
-unset CONFIG_SITE
+# Settings for this project, read by lib/common.sh.
+DEFAULT_API=24
+WORK_ROOT_WIN="C:/Tmp/curl-android"
+BUILD_NAME="build-static"
+OUT_NAME="out-static"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-ANDROID_SDK_WIN="${ANDROID_SDK_WIN:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${LOCALAPPDATA:-}/Android/Sdk}}}"
-ANDROID_SDK="$(cygpath -u "$ANDROID_SDK_WIN")"
-if [[ -z "${ANDROID_NDK_WIN:-}" ]]; then
-  ndk_latest="$(ls -d "$ANDROID_SDK"/ndk/*/ 2>/dev/null | sort -V | tail -n 1 || true)"
-  if [[ -z "$ndk_latest" ]]; then
-    echo "ERROR: no NDK found in $ANDROID_SDK/ndk. Install one, or set ANDROID_NDK_WIN." >&2
-    exit 1
-  fi
-  ANDROID_NDK_WIN="$(cygpath -m "${ndk_latest%/}")"
-fi
-# Autotools cannot reliably handle spaces in compiler paths. Use the Windows
-# 8.3 short path for the NDK directory (needs 8.3 names enabled on the drive,
-# otherwise install the NDK in a path without spaces).
-ANDROID_NDK="$(cygpath -u "$(cygpath -d "$ANDROID_NDK_WIN")")"
-TOOLCHAIN="$ANDROID_NDK/toolchains/llvm/prebuilt/windows-x86_64"
-API="${API:-24}"
-JOBS="${JOBS:-4}"
-
-WORK_ROOT_WIN="C:/Tmp/android-core-deps"
-WORK_ROOT="$(cygpath -u "$WORK_ROOT_WIN")"
-SRC="$WORK_ROOT/src"
-BUILD="$WORK_ROOT/build-core"
-OUT="$WORK_ROOT/core-static"
-
-OPENSSL_VERSION="3.3.2"
-CURL_VERSION="8.10.1"
-ZLIB_VERSION="1.3.1"
-BROTLI_VERSION="1.1.0"
-ZSTD_VERSION="1.5.6"
-CARES_VERSION="1.34.3"
-NGHTTP2_VERSION="1.64.0"
-NGHTTP3_VERSION="1.6.0"
-LIBSSH2_VERSION="1.11.1"
-LIBUNISTRING_VERSION="1.3"
-LIBIDN2_VERSION="2.3.7"
-LIBPSL_VERSION="0.21.5"
-SQLITE_YEAR="2024"
-SQLITE_AMALGAMATION="sqlite-amalgamation-3450300"
-NLOHMANN_JSON_VERSION="3.11.3"
-
-mkdir -p "$SRC" "$BUILD" "$OUT"
-
-download() {
-  local url="$1"
-  local file="$2"
-  if [[ ! -f "$SRC/$file" ]]; then
-    echo "==> Download $file"
-    local out_win
-    out_win="$(cygpath -w "$SRC/$file")"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
-      "\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$out_win'"
-  fi
-}
-
-extract() {
-  local file="$1"
-  local dir="$2"
-  if [[ ! -d "$SRC/$dir" ]]; then
-    echo "==> Extract $file"
-    case "$file" in
-      *.zip)
-        powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
-          "Expand-Archive -LiteralPath '$(cygpath -w "$SRC/$file")' -DestinationPath '$(cygpath -w "$SRC")' -Force"
-        ;;
-      zstd-*.tar.gz)
-        tar --exclude='zstd-*/tests' -xf "$SRC/$file" -C "$SRC"
-        ;;
-      *)
-        tar -xf "$SRC/$file" -C "$SRC"
-        ;;
-    esac
-  fi
-}
+# Dependency versions. The numbers below are the defaults: the versions this
+# script was last tested with. At the start, the script looks for newer
+# releases online and uses them when it finds one. To skip the lookup for one
+# dependency, set its variable before running, for example ZLIB_VERSION=1.3.1.
+echo "==> Checking for newer versions of the dependencies (about a minute)"
+resolve_version OPENSSL 3.3.2 github_version openssl/openssl openssl-
+resolve_version CURL 8.10.1 listing_version https://curl.se/download/ curl- '\.tar\.xz'
+resolve_version ZLIB 1.3.1 github_version madler/zlib v
+resolve_version BROTLI 1.1.0 github_version google/brotli v
+resolve_version ZSTD 1.5.6 github_version facebook/zstd v
+resolve_version CARES 1.34.3 github_version c-ares/c-ares v
+resolve_version NGHTTP2 1.64.0 github_version nghttp2/nghttp2 v
+resolve_version NGHTTP3 1.6.0 github_version ngtcp2/nghttp3 v
+resolve_version LIBSSH2 1.11.1 github_version libssh2/libssh2 libssh2-
+resolve_version LIBUNISTRING 1.3 listing_version https://ftp.gnu.org/gnu/libunistring/ libunistring- '\.tar\.xz'
+resolve_version LIBIDN2 2.3.7 listing_version https://ftp.gnu.org/gnu/libidn/ libidn2- '\.tar\.gz'
+resolve_version LIBPSL 0.21.5 github_version rockdaboot/libpsl ''
+echo "==> Version check done"
 
 abi_vars() {
-  ABI="$1"
+  select_abi "$1"
   case "$ABI" in
-    arm64-v8a)
-      ANDROID_ABI="arm64-v8a"
-      HOST="aarch64-linux-android"
-      CLANG_PREFIX="aarch64-linux-android"
-      OPENSSL_TARGET="android-arm64"
-      ;;
-    armeabi-v7a)
-      ANDROID_ABI="armeabi-v7a"
-      HOST="arm-linux-androideabi"
-      CLANG_PREFIX="armv7a-linux-androideabi"
-      OPENSSL_TARGET="android-arm"
-      ;;
-    x86)
-      ANDROID_ABI="x86"
-      HOST="i686-linux-android"
-      CLANG_PREFIX="i686-linux-android"
-      OPENSSL_TARGET="android-x86"
-      ;;
-    x86_64)
-      ANDROID_ABI="x86_64"
-      HOST="x86_64-linux-android"
-      CLANG_PREFIX="x86_64-linux-android"
-      OPENSSL_TARGET="android-x86_64"
-      ;;
-    *)
-      echo "Unknown ABI: $ABI" >&2
-      exit 1
-      ;;
+    arm64-v8a) OPENSSL_TARGET="android-arm64" ;;
+    armeabi-v7a) OPENSSL_TARGET="android-arm" ;;
+    x86) OPENSSL_TARGET="android-x86" ;;
+    x86_64) OPENSSL_TARGET="android-x86_64" ;;
   esac
 
   PREFIX="$OUT/$ABI"
@@ -168,32 +95,10 @@ cmake_build() {
   /ucrt64/bin/cmake --install "$bdir"
 }
 
-configure_build() {
-  local name="$1"
-  local src_dir="$2"
-  shift 2
-  local bdir="$BUILD/$ABI/$name"
-  rm -rf "$bdir"
-  mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  CONFIG_SITE=/dev/null ac_cv_exeext= ac_cv_objext=o "$src_dir/configure" \
-    --host="$HOST" \
-    --prefix="$PREFIX" \
-    "$@"
-  # configure can write Windows-style paths (C:/...) into the Makefiles;
-  # convert them to MSYS paths so make can read them.
-  find . -name Makefile -type f -exec sed -i \
-    -e 's#/C:/#/c/#g' \
-    -e 's#C:/#/c/#g' {} +
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
-}
-
 prepare_sources() {
-  download "https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz" "openssl-${OPENSSL_VERSION}.tar.gz"
+  download "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" "openssl-${OPENSSL_VERSION}.tar.gz"
   download "https://curl.se/download/curl-${CURL_VERSION}.tar.xz" "curl-${CURL_VERSION}.tar.xz"
-  download "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz" "zlib-${ZLIB_VERSION}.tar.gz"
+  download "https://github.com/madler/zlib/archive/refs/tags/v${ZLIB_VERSION}.tar.gz" "zlib-${ZLIB_VERSION}.tar.gz"
   download "https://github.com/google/brotli/archive/refs/tags/v${BROTLI_VERSION}.tar.gz" "brotli-${BROTLI_VERSION}.tar.gz"
   download "https://github.com/facebook/zstd/releases/download/v${ZSTD_VERSION}/zstd-${ZSTD_VERSION}.tar.gz" "zstd-${ZSTD_VERSION}.tar.gz"
   download "https://github.com/c-ares/c-ares/releases/download/v${CARES_VERSION}/c-ares-${CARES_VERSION}.tar.gz" "c-ares-${CARES_VERSION}.tar.gz"
@@ -203,14 +108,12 @@ prepare_sources() {
   download "https://ftp.gnu.org/gnu/libunistring/libunistring-${LIBUNISTRING_VERSION}.tar.xz" "libunistring-${LIBUNISTRING_VERSION}.tar.xz"
   download "https://ftp.gnu.org/gnu/libidn/libidn2-${LIBIDN2_VERSION}.tar.gz" "libidn2-${LIBIDN2_VERSION}.tar.gz"
   download "https://github.com/rockdaboot/libpsl/releases/download/${LIBPSL_VERSION}/libpsl-${LIBPSL_VERSION}.tar.gz" "libpsl-${LIBPSL_VERSION}.tar.gz"
-  download "https://www.sqlite.org/${SQLITE_YEAR}/${SQLITE_AMALGAMATION}.zip" "${SQLITE_AMALGAMATION}.zip"
-  download "https://raw.githubusercontent.com/nlohmann/json/v${NLOHMANN_JSON_VERSION}/single_include/nlohmann/json.hpp" "json.hpp"
 
   extract "openssl-${OPENSSL_VERSION}.tar.gz" "openssl-${OPENSSL_VERSION}"
   extract "curl-${CURL_VERSION}.tar.xz" "curl-${CURL_VERSION}"
   extract "zlib-${ZLIB_VERSION}.tar.gz" "zlib-${ZLIB_VERSION}"
   extract "brotli-${BROTLI_VERSION}.tar.gz" "brotli-${BROTLI_VERSION}"
-  extract "zstd-${ZSTD_VERSION}.tar.gz" "zstd-${ZSTD_VERSION}"
+  extract "zstd-${ZSTD_VERSION}.tar.gz" "zstd-${ZSTD_VERSION}" --exclude='zstd-*/tests'
   extract "c-ares-${CARES_VERSION}.tar.gz" "c-ares-${CARES_VERSION}"
   extract "nghttp2-${NGHTTP2_VERSION}.tar.xz" "nghttp2-${NGHTTP2_VERSION}"
   extract "nghttp3-${NGHTTP3_VERSION}.tar.xz" "nghttp3-${NGHTTP3_VERSION}"
@@ -218,27 +121,6 @@ prepare_sources() {
   extract "libunistring-${LIBUNISTRING_VERSION}.tar.xz" "libunistring-${LIBUNISTRING_VERSION}"
   extract "libidn2-${LIBIDN2_VERSION}.tar.gz" "libidn2-${LIBIDN2_VERSION}"
   extract "libpsl-${LIBPSL_VERSION}.tar.gz" "libpsl-${LIBPSL_VERSION}"
-  extract "${SQLITE_AMALGAMATION}.zip" "${SQLITE_AMALGAMATION}"
-}
-
-# SQLite is built straight from the amalgamation (a single .c file).
-build_sqlite() {
-  if [[ -f "$PREFIX/lib/libsqlite3.a" ]]; then
-    echo "==> Skip sqlite for $ABI"
-    return
-  fi
-  mkdir -p "$PREFIX/lib" "$PREFIX/include"
-  "$CC" $CFLAGS -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -DSQLITE_ENABLE_JSON1 \
-    -c "$SRC/$SQLITE_AMALGAMATION/sqlite3.c" -o "$BUILD/$ABI-sqlite3.o"
-  "$AR" rcs "$PREFIX/lib/libsqlite3.a" "$BUILD/$ABI-sqlite3.o"
-  "$RANLIB" "$PREFIX/lib/libsqlite3.a"
-  cp -f "$SRC/$SQLITE_AMALGAMATION/sqlite3.h" "$PREFIX/include/sqlite3.h"
-}
-
-# nlohmann/json is header-only, so it is just copied.
-build_nlohmann() {
-  mkdir -p "$PREFIX/include/nlohmann"
-  cp -f "$SRC/json.hpp" "$PREFIX/include/nlohmann/json.hpp"
 }
 
 build_openssl() {
@@ -498,12 +380,10 @@ for abi in ${ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
 
   echo
   echo "============================================================"
-  echo "Building core deps for $ABI"
+  echo "Building curl and its dependencies for $ABI"
   echo "PREFIX=$PREFIX"
   echo "============================================================"
 
-  build_sqlite
-  build_nlohmann
   build_openssl
   build_zlib
   build_brotli
@@ -523,5 +403,5 @@ for abi in ${ABIS:-arm64-v8a armeabi-v7a x86 x86_64}; do
 done
 
 echo
-echo "Done. Android core deps are in:"
+echo "Done. curl and its dependencies are in:"
 echo "$OUT"

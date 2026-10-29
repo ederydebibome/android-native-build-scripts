@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Build ImageMagick Android with native delegates.
+# Needs lib/common.sh (shared code) from the same repository.
 # Run with:
 #   C:\msys64\usr\bin\bash.exe path\to\build-imagemagick-android.sh
 #
@@ -15,110 +16,45 @@ set -euo pipefail
 #   JOBS              parallel jobs (default: 4)
 #   ONLY_IMAGEMAGICK  set to 1 to rebuild only ImageMagick and keep the
 #                     dependencies that are already built
+#   *_VERSION         skip the online lookup for one dependency and use this
+#                     version, for example ZLIB_VERSION=1.3.1
 
-export PATH="/ucrt64/bin:/usr/bin:/bin:$PATH"
-export SSL_CERT_FILE="${SSL_CERT_FILE:-/usr/ssl/certs/ca-bundle.crt}"
-export CURL_CA_BUNDLE="${CURL_CA_BUNDLE:-$SSL_CERT_FILE}"
-unset CONFIG_SITE
-
-ANDROID_SDK_WIN="${ANDROID_SDK_WIN:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-${LOCALAPPDATA:-}/Android/Sdk}}}"
-ANDROID_SDK="$(cygpath -u "$ANDROID_SDK_WIN")"
-if [[ -z "${ANDROID_NDK_WIN:-}" ]]; then
-  ndk_latest="$(ls -d "$ANDROID_SDK"/ndk/*/ 2>/dev/null | sort -V | tail -n 1 || true)"
-  if [[ -z "$ndk_latest" ]]; then
-    echo "ERROR: no NDK found in $ANDROID_SDK/ndk. Install one, or set ANDROID_NDK_WIN." >&2
-    exit 1
-  fi
-  ANDROID_NDK_WIN="$(cygpath -m "${ndk_latest%/}")"
-fi
-# Autotools cannot reliably handle spaces in compiler paths. Use the Windows
-# 8.3 short path for the NDK directory (needs 8.3 names enabled on the drive,
-# otherwise install the NDK in a path without spaces).
-ANDROID_NDK="$(cygpath -u "$(cygpath -d "$ANDROID_NDK_WIN")")"
-TOOLCHAIN="$ANDROID_NDK/toolchains/llvm/prebuilt/windows-x86_64"
-API="${API:-23}"
-
+# Settings for this project, read by lib/common.sh.
+DEFAULT_API=23
 WORK_ROOT_WIN="C:/Tmp/imagemagick-android"
-WORK_ROOT="$(cygpath -u "$WORK_ROOT_WIN")"
-SRC="$WORK_ROOT/src"
-BUILD="$WORK_ROOT/build-static"
-OUT="$WORK_ROOT/out-static"
+BUILD_NAME="build-static"
+OUT_NAME="out-static"
+source "$(dirname "${BASH_SOURCE[0]}")/lib/common.sh"
 
-JOBS="${JOBS:-4}"
-
-# Pinned dependency versions. Rebuild from scratch after changing any of them.
-ZLIB_VERSION="1.3.1"
-LIBPNG_VERSION="1.6.58"
-JPEG_TURBO_VERSION="3.1.4"
-WEBP_VERSION="1.6.0"
-FREETYPE_VERSION="2.14.3"
-LCMS2_VERSION="2.17"
-TIFF_VERSION="4.7.1"
-OPENJPEG_VERSION="2.5.4"
-IMAGEMAGICK_VERSION="7.1.2-21"
-LIBANDROID_SUPPORT_VERSION="29"
-WCWIDTH_VERSION="4"
-UTIL_MACROS_VERSION="1.20.2"
-XORGPROTO_VERSION="2024.1"
-XTRANS_VERSION="1.5.0"
-LIBXAU_VERSION="1.0.11"
-LIBXDMCP_VERSION="1.1.5"
-XCBPROTO_VERSION="1.17.0"
-PTHREAD_STUBS_VERSION="0.5"
-LIBXCB_VERSION="1.17.0"
-LIBX11_VERSION="1.8.10"
-
-mkdir -p "$SRC" "$BUILD" "$OUT"
-
-download() {
-  local url="$1"
-  local file="$2"
-  if [[ ! -f "$SRC/$file" ]]; then
-    echo "==> Download $file"
-    local out_win
-    out_win="$(cygpath -w "$SRC/$file")"
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \
-      "\$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '$url' -OutFile '$out_win'"
-  fi
-}
-
-extract() {
-  local file="$1"
-  local dir="$2"
-  if [[ ! -d "$SRC/$dir" ]]; then
-    echo "==> Extract $file"
-    tar -xf "$SRC/$file" -C "$SRC"
-  fi
-}
+# Dependency versions. The numbers below are the defaults: the versions this
+# script was last tested with. At the start, the script looks for newer
+# releases online and uses them when it finds one. To skip the lookup for one
+# dependency, set its variable before running, for example ZLIB_VERSION=1.3.1.
+echo "==> Checking for newer versions of the dependencies (about a minute)"
+resolve_version ZLIB 1.3.1 github_version madler/zlib v
+resolve_version LIBPNG 1.6.58 github_version pnggroup/libpng v
+resolve_version JPEG_TURBO 3.1.4 github_version libjpeg-turbo/libjpeg-turbo ''
+resolve_version WEBP 1.6.0 github_version webmproject/libwebp v
+resolve_version FREETYPE 2.14.3 listing_version https://download.savannah.gnu.org/releases/freetype/ freetype- '\.tar\.xz'
+resolve_version LCMS2 2.17 github_version mm2/Little-CMS lcms
+resolve_version TIFF 4.7.1 listing_version https://download.osgeo.org/libtiff/ tiff- '\.tar\.xz'
+resolve_version OPENJPEG 2.5.4 github_version uclouvain/openjpeg v
+resolve_version IMAGEMAGICK 7.1.2-21 github_version ImageMagick/ImageMagick ''
+resolve_version LIBANDROID_SUPPORT 29 github_version termux/libandroid-support v
+resolve_version WCWIDTH 4 github_version termux/wcwidth v
+resolve_version UTIL_MACROS 1.20.2 listing_version https://xorg.freedesktop.org/archive/individual/util/ util-macros- '\.tar\.gz'
+resolve_version XORGPROTO 2024.1 listing_version https://xorg.freedesktop.org/archive/individual/proto/ xorgproto- '\.tar\.gz'
+resolve_version XTRANS 1.5.0 listing_version https://xorg.freedesktop.org/archive/individual/lib/ xtrans- '\.tar\.gz'
+resolve_version LIBXAU 1.0.11 listing_version https://xorg.freedesktop.org/archive/individual/lib/ libXau- '\.tar\.gz'
+resolve_version LIBXDMCP 1.1.5 listing_version https://xorg.freedesktop.org/archive/individual/lib/ libXdmcp- '\.tar\.gz'
+resolve_version XCBPROTO 1.17.0 listing_version https://xorg.freedesktop.org/archive/individual/xcb/ xcb-proto- '\.tar\.gz'
+resolve_version PTHREAD_STUBS 0.5 listing_version https://xcb.freedesktop.org/dist/ libpthread-stubs- '\.tar\.gz'
+resolve_version LIBXCB 1.17.0 listing_version https://xorg.freedesktop.org/archive/individual/xcb/ libxcb- '\.tar\.gz'
+resolve_version LIBX11 1.8.10 listing_version https://xorg.freedesktop.org/archive/individual/lib/ libX11- '\.tar\.gz'
+echo "==> Version check done"
 
 abi_vars() {
-  ABI="$1"
-  case "$ABI" in
-    arm64-v8a)
-      ANDROID_ABI="arm64-v8a"
-      HOST="aarch64-linux-android"
-      CLANG_PREFIX="aarch64-linux-android"
-      ;;
-    armeabi-v7a)
-      ANDROID_ABI="armeabi-v7a"
-      HOST="arm-linux-androideabi"
-      CLANG_PREFIX="armv7a-linux-androideabi"
-      ;;
-    x86)
-      ANDROID_ABI="x86"
-      HOST="i686-linux-android"
-      CLANG_PREFIX="i686-linux-android"
-      ;;
-    x86_64)
-      ANDROID_ABI="x86_64"
-      HOST="x86_64-linux-android"
-      CLANG_PREFIX="x86_64-linux-android"
-      ;;
-    *)
-      echo "Unknown ABI: $ABI" >&2
-      exit 1
-      ;;
-  esac
+  select_abi "$1"
 
   PREFIX="$OUT/$ABI"
   mkdir -p "$BUILD/$ABI"
@@ -224,28 +160,6 @@ cmake_build() {
     "$@"
   cmake --build "$bdir" --parallel "$JOBS"
   cmake --install "$bdir"
-}
-
-configure_build() {
-  local name="$1"
-  local src_dir="$2"
-  shift 2
-  local bdir="$BUILD/$ABI/$name"
-  rm -rf "$bdir"
-  mkdir -p "$bdir"
-  pushd "$bdir" >/dev/null
-  CONFIG_SITE=/dev/null ac_cv_exeext= ac_cv_objext=o "$src_dir/configure" \
-    --host="$HOST" \
-    --prefix="$PREFIX" \
-    "$@"
-  # configure can write Windows-style paths (C:/...) into the Makefiles;
-  # convert them to MSYS paths so make can read them.
-  find . -name Makefile -type f -exec sed -i \
-    -e 's#/C:/#/c/#g' \
-    -e 's#C:/#/c/#g' {} +
-  make -j"$JOBS"
-  make install
-  popd >/dev/null
 }
 
 ensure_libpng_pkgconfig() {
@@ -438,7 +352,7 @@ build_x11_deps() {
 }
 
 prepare_sources() {
-  download "https://zlib.net/fossils/zlib-${ZLIB_VERSION}.tar.gz" "zlib-${ZLIB_VERSION}.tar.gz"
+  download "https://github.com/madler/zlib/archive/refs/tags/v${ZLIB_VERSION}.tar.gz" "zlib-${ZLIB_VERSION}.tar.gz"
   download "https://github.com/pnggroup/libpng/archive/refs/tags/v${LIBPNG_VERSION}.tar.gz" "libpng-${LIBPNG_VERSION}.tar.gz"
   download "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/${JPEG_TURBO_VERSION}.tar.gz" "libjpeg-turbo-${JPEG_TURBO_VERSION}.tar.gz"
   download "https://github.com/webmproject/libwebp/archive/refs/tags/v${WEBP_VERSION}.tar.gz" "libwebp-${WEBP_VERSION}.tar.gz"
@@ -479,6 +393,7 @@ prepare_sources() {
   extract "libpthread-stubs-${PTHREAD_STUBS_VERSION}.tar.gz" "libpthread-stubs-${PTHREAD_STUBS_VERSION}"
   extract "libxcb-${LIBXCB_VERSION}.tar.gz" "libxcb-${LIBXCB_VERSION}"
   extract "libX11-${LIBX11_VERSION}.tar.gz" "libX11-${LIBX11_VERSION}"
+
   if [[ -n "$(find "$SRC/libX11-${LIBX11_VERSION}/include/X11" -maxdepth 1 -name 'xlocale.h' -print -quit)" ]]; then
     mv "$SRC/libX11-${LIBX11_VERSION}/include/X11/xlocale.h" "$SRC/libX11-${LIBX11_VERSION}/include/X11/Xlocale.h.tmp"
     mv "$SRC/libX11-${LIBX11_VERSION}/include/X11/Xlocale.h.tmp" "$SRC/libX11-${LIBX11_VERSION}/include/X11/Xlocale.h"
@@ -501,6 +416,9 @@ build_one_abi() {
       "$BUILD"/*) rm -rf "$BUILD/$ABI" ;;
       *) echo "Refusing to clean unexpected build dir: $BUILD/$ABI" >&2; exit 1 ;;
     esac
+    # The cleanup above also deleted what abi_vars put in $BUILD/$ABI (the
+    # compiler wrapper scripts and TMPDIR), so create them again.
+    abi_vars "$ABI"
   fi
   mkdir -p "$PREFIX"
 
